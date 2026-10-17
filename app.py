@@ -1,137 +1,147 @@
 import os
 import time
 import threading
+import re
 import requests
-from urllib.parse import quote
-from datetime import datetime
-from zoneinfo import ZoneInfo
-from flask import Flask, request, jsonify
+from datetime import datetime, timedelta
+from flask import Flask, request
 
 app = Flask(__name__)
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_USERNAME = os.getenv("TELEGRAM_USERNAME", "")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+TELEGRAM_USERNAME = os.environ.get("TELEGRAM_USERNAME", "")
 
-IST = ZoneInfo("Asia/Kolkata")
-REMINDERS = []
+tasks = []
+
+def get_ist_now():
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+def normalize_time(time_str):
+    # Converts formats like 9.38pm, 5.30am, 21:30 into standard HH:MM (24-hr)
+    s = time_str.strip().lower().replace('.', ':')
+    m = re.match(r'^(\d{1,2}):(\d{2})\s*(am|pm)?$', s)
+    if not m:
+        return None
+    hr, mn, period = int(m.group(1)), int(m.group(2)), m.group(3)
+    if period == 'pm' and hr < 12:
+        hr += 12
+    elif period == 'am' and hr == 12:
+        hr = 0
+    return f"{hr:02d}:{mn:02d}"
 
 def send_telegram_message(chat_id, text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
-    except Exception as e:
-        print("Telegram Send Error:", e)
+    requests.post(url, json={"chat_id": chat_id, "text": text})
 
-def make_telegram_call(task_text):
-    if not TELEGRAM_USERNAME:
-        return
-    user = TELEGRAM_USERNAME if TELEGRAM_USERNAME.startswith("@") else f"@{TELEGRAM_USERNAME}"
-    msg = quote(f"Hello! Reminder for your task: {task_text}")
-    url = f"http://api.callmebot.com/start.php?user={user}&text={msg}&lang=en-US-Standard-B&rpt=2"
-    try:
-        requests.get(url, timeout=15)
-    except Exception as e:
-        print("Call Error:", e)
+def trigger_call_alert():
+    if TELEGRAM_USERNAME:
+        user = TELEGRAM_USERNAME.lstrip('@')
+        try:
+            requests.get(f"http://api.callmebot.com/start.php?user=@{user}&text=Task+Reminder+Alert&lang=en-US-Standard-B", timeout=10)
+        except Exception:
+            pass
 
-def get_gemini_reply(user_message: str) -> str:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-    payload = {
-        "contents": [{"parts": [{"text": user_message}]}],
-        "systemInstruction": {
-            "parts": [{"text": "You are a friendly personal assistant and task manager on Telegram. Keep answers concise and helpful."}]
-        }
+def ask_gemini(prompt):
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
+    headers = {
+        "Content-Type": "application/json",
+        "X-goog-api-key": GEMINI_API_KEY
+    }
+    data = {
+        "contents": [{"parts": [{"text": prompt}]}]
     }
     try:
-        res = requests.post(url, json=payload, timeout=20)
-        data = res.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        res = requests.post(url, headers=headers, json=data, timeout=15)
+        res_json = res.json()
+        return res_json["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
-        print("Gemini Error:", e)
         return "Sorry, I faced a temporary error. Please try again!"
 
-def reminder_loop():
-    last_checked = ""
+def reminder_worker():
     while True:
-        now_ist = datetime.now(IST).strftime("%H:%M")
-        if now_ist != last_checked:
-            last_checked = now_ist
-            for r in REMINDERS[:]:
-                if r["time"] == now_ist:
-                    send_telegram_message(r["chat_id"], f"⏰ സമയം {now_ist} ആയി!\n👉 ടാസ്ക്: {r['task']}")
-                    make_telegram_call(r["task"])
-                    if not r.get("daily", False):
-                        REMINDERS.remove(r)
+        now_str = get_ist_now().strftime("%H:%M")
+        for t in tasks[:]:
+            if t["time"] == now_str and t.get("last_sent") != now_str:
+                send_telegram_message(t["chat_id"], f"⏰ *Reminder!* \n📝 {t['task']}")
+                trigger_call_alert()
+                t["last_sent"] = now_str
+                if not t["daily"]:
+                    tasks.remove(t)
         time.sleep(15)
 
-threading.Thread(target=reminder_loop, daemon=True).start()
+threading.Thread(target=reminder_worker, daemon=True).start()
 
-def handle_incoming(chat_id, user_text):
-    text = user_text.strip()
+@app.route("/")
+def home():
+    return f"Telegram Bot is Live! Current IST: {get_ist_now().strftime('%H:%M:%S')}"
 
-    if text == "/start":
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.get_json()
+    if not data or "message" not in data:
+        return "OK", 200
+
+    msg = data["message"]
+    chat_id = msg["chat"]["id"]
+    text = msg.get("text", "").strip()
+    if not text:
+        return "OK", 200
+
+    cmd_lower = text.lower()
+
+    if cmd_lower == "/start":
         welcome = (
-            "👋 ഹലോ! ഞാൻ നിങ്ങളുടെ AI Task & Call Bot ആണ്.\n\n"
-            "📌 ഒറ്റത്തവണ ഓർമ്മിപ്പിക്കാൻ:\n`/remind 18:30 Gym Workout`\n\n"
+            "👋 ഹലോ! ഞാൻ നിങ്ങളുടെ WARUNNI ആണ്.\n\n"
+            "📌 ഒറ്റത്തവണ ഓർമ്മിപ്പിക്കാൻ:\n`/remind 18:30 Gym Workout` അല്ലെങ്കിൽ `/remind 6.30pm Gym`\n\n"
             "🔁 എല്ലാ ദിവസവും ഓർമ്മിപ്പിക്കാൻ:\n`/daily 06:30 Morning Walk`\n\n"
             "📋 ടാസ്കുകൾ കാണാൻ:\n`/tasks`\n\n"
             "മറ്റ് എന്ത് സംശയവും സാധാരണ പോലെ ചാറ്റിൽ ചോദിക്കാം!"
         )
         send_telegram_message(chat_id, welcome)
-        return
 
-    if text.startswith("/remind "):
-        parts = text.split(" ", 2)
-        if len(parts) >= 3:
-            r_time, r_task = parts[1], parts[2]
-            REMINDERS.append({"chat_id": chat_id, "time": r_time, "task": r_task, "daily": False})
-            send_telegram_message(chat_id, f"✅ ടാസ്ക് സെറ്റ് ചെയ്തു!\n⏰ സമയം: {r_time}\n📝 ടാസ്ക്: {r_task}")
-        else:
-            send_telegram_message(chat_id, "ഇങ്ങനെ അയക്കുക:\n/remind 18:30 Workout")
-        return
-
-    if text.startswith("/daily "):
-        parts = text.split(" ", 2)
-        if len(parts) >= 3:
-            r_time, r_task = parts[1], parts[2]
-            REMINDERS.append({"chat_id": chat_id, "time": r_time, "task": r_task, "daily": True})
-            send_telegram_message(chat_id, f"🔁 സ്ഥിരം ടാസ്ക് സെറ്റ് ചെയ്തു ({r_time}):\n📝 {r_task}")
-        else:
-            send_telegram_message(chat_id, "ഇങ്ങനെ അയക്കുക:\n/daily 06:30 Morning Walk")
-        return
-
-    if text == "/tasks":
-        user_tasks = [r for r in REMINDERS if r["chat_id"] == chat_id]
+    elif cmd_lower == "/tasks":
+        user_tasks = [t for t in tasks if t["chat_id"] == chat_id]
         if not user_tasks:
-            send_telegram_message(chat_id, "നിലവിൽ ടാസ്കുകൾ ഒന്നും സെറ്റ് ചെയ്തിട്ടില്ല.")
+            send_telegram_message(chat_id, "📭 നിലവിൽ ടാസ്കുകൾ ഒന്നും സെറ്റ് ചെയ്തിട്ടില്ല.")
         else:
-            msg = "📋 നിങ്ങളുടെ ടാസ്കുകൾ:\n"
-            for i, r in enumerate(user_tasks, 1):
-                dtype = "🔁 Daily" if r["daily"] else "⏳ Once"
-                msg += f"{i}. {r['time']} - {r['task']} ({dtype})\n"
-            send_telegram_message(chat_id, msg)
-        return
+            msg_list = "📋 *നിങ്ങളുടെ ടാസ്കുകൾ:*\n\n"
+            for i, t in enumerate(user_tasks, 1):
+                dtype = "🔁 Daily" if t["daily"] else "📌 Once"
+                msg_list += f"{i}. ⏰ {t['time']} - {t['task']} ({dtype})\n"
+            send_telegram_message(chat_id, msg_list)
 
-    reply = get_gemini_reply(text)
-    send_telegram_message(chat_id, reply)
+    elif cmd_lower.startswith(("/remind", "/remaind", "/daily")):
+        is_daily = cmd_lower.startswith("/daily")
+        # Matches time like 9.36 pm, 9.36pm, 21:36
+        match = re.match(r'^/\w+\s+(\d{1,2}[:.]\d{2}\s*(?:am|pm)?)\s+(.+)$', text, re.IGNORECASE)
+        if match:
+            raw_time, task_desc = match.group(1), match.group(2)
+            norm_time = normalize_time(raw_time)
+            if norm_time:
+                tasks.append({
+                    "chat_id": chat_id,
+                    "time": norm_time,
+                    "task": task_desc,
+                    "daily": is_daily,
+                    "last_sent": ""
+                })
+                if is_daily:
+                    send_telegram_message(chat_id, f"🔁 സ്ഥിരം ടാസ്ക് സെറ്റ് ചെയ്തു!\n⏰ സമയം: {norm_time} ({raw_time})\n📝 ടാസ്ക്: {task_desc}")
+                else:
+                    send_telegram_message(chat_id, f"✅ ടാസ്ക് സെറ്റ് ചെയ്തു!\n⏰ സമയം: {norm_time} ({raw_time})\n📝 ടാസ്ക്: {task_desc}")
+            else:
+                send_telegram_message(chat_id, "⚠️ സമയം ശരിയായ രീതിയിൽ നൽകുക. ഉദാഹരണത്തിന്: `/remind 9.45pm Tea`")
+        else:
+            send_telegram_message(chat_id, "⚠️ ഫോർമാറ്റ് തെറ്റാണ്! ഇങ്ങനെ അയക്കുക:\n`/remind 9.45pm Tea shop`")
 
-@app.route("/", methods=["GET"])
-def home():
-    now_ist = datetime.now(IST).strftime("%H:%M:%S")
-    return f"Telegram Bot is Live! Current IST: {now_ist}", 200
+    else:
+        reply = ask_gemini(text)
+        send_telegram_message(chat_id, reply)
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.get_json()
-    try:
-        if "message" in data and "text" in data["message"]:
-            chat_id = data["message"]["chat"]["id"]
-            user_text = data["message"]["text"]
-            threading.Thread(target=handle_incoming, args=(chat_id, user_text)).start()
-    except Exception as e:
-        print("Webhook Error:", e)
-    return jsonify({"status": "ok"}), 200
+    return "OK", 200
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+

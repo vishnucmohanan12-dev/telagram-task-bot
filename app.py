@@ -30,7 +30,7 @@ HTML_APP = """
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
         body { background: #0f172a; color: #f8fafc; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        .header { background: #1e293b; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
+        .header { background: #1e293b; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
         .header h1 { font-size: 18px; color: #38bdf8; display: flex; align-items: center; gap: 8px; }
         .clock { font-size: 14px; font-weight: bold; color: #94a3b8; background: #0f172a; padding: 6px 12px; border-radius: 20px; }
         .content { flex: 1; overflow-y: auto; padding: 16px; }
@@ -41,17 +41,16 @@ HTML_APP = """
         .input-group label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 6px; }
         input[type="text"], input[type="time"] { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #475569; background: #0f172a; color: white; font-size: 15px; outline: none; }
         .row { display: flex; gap: 10px; align-items: center; }
-        .btn { background: #0284c7; color: white; border: none; padding: 12px 18px; border-radius: 10px; font-weight: bold; width: 100%; cursor: pointer; font-size: 15px; transition: 0.2s; }
-        .btn:active { transform: scale(0.98); background: #0369a1; }
+        .btn { background: #0284c7; color: white; border: none; padding: 12px 18px; border-radius: 10px; font-weight: bold; width: 100%; cursor: pointer; font-size: 15px; }
         .task-item { background: #0f172a; padding: 12px 14px; border-radius: 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid #38bdf8; }
         .task-info h4 { font-size: 15px; margin-bottom: 2px; }
         .task-info span { font-size: 12px; color: #94a3b8; }
         .del-btn { background: #ef4444; color: white; border: none; padding: 6px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
         .chat-box { flex: 1; overflow-y: auto; padding-bottom: 12px; display: flex; flex-direction: column; gap: 10px; }
-        .msg { max-width: 82%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.4; word-wrap: break-word; }
+        .msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.4; word-wrap: break-word; }
         .msg.user { background: #0284c7; align-self: flex-end; border-bottom-right-radius: 2px; }
         .msg.bot { background: #1e293b; align-self: flex-start; border-bottom-left-radius: 2px; border: 1px solid #334155; }
-        .chat-input { display: flex; gap: 8px; padding-top: 8px; }
+        .chat-input-area { display: flex; gap: 8px; padding-top: 8px; }
         .nav { background: #1e293b; display: flex; border-top: 1px solid #334155; }
         .nav-btn { flex: 1; padding: 14px; text-align: center; color: #94a3b8; background: none; border: none; font-size: 14px; font-weight: bold; cursor: pointer; }
         .nav-btn.active { color: #38bdf8; border-top: 3px solid #38bdf8; background: #0f172a; }
@@ -68,6 +67,7 @@ HTML_APP = """
     </div>
 
     <div class="content">
+        <!-- TASKS TAB -->
         <div id="tasksTab" class="tab-view active">
             <div class="card">
                 <div class="input-group">
@@ -89,17 +89,19 @@ HTML_APP = """
             <div id="taskList"></div>
         </div>
 
+        <!-- GEMINI CHAT TAB -->
         <div id="chatTab" class="tab-view">
             <div class="chat-box" id="chatBox">
                 <div class="msg bot">👋 ഹലോ വിഷ്ണു! എന്ത് സംശയവും എന്നോട് ചോദിക്കാം!</div>
             </div>
-            <div class="chat-input">
-                <input type="text" id="chatInput" placeholder="മെസ്സേജ് ടൈപ്പ് ചെയ്യുക..." onkeypress="if(event.key==='Enter')sendChat()">
+            <div class="chat-input-area">
+                <input type="text" id="chatInput" placeholder="ചോദ്യം ടൈപ്പ് ചെയ്യുക..." onkeypress="if(event.key==='Enter')sendChat()">
                 <button class="btn" style="width:auto;padding:0 20px;" onclick="sendChat()">➤</button>
             </div>
         </div>
     </div>
 
+    <!-- CALL OVERLAY -->
     <div id="callOverlay">
         <div class="pulse">📞</div>
         <h2 style="color:#94a3b8;font-size:16px;margin-bottom:8px;">INCOMING VOICE REMINDER</h2>
@@ -107,6 +109,7 @@ HTML_APP = """
         <button class="stop-btn" onclick="stopAlarm()">🔕 Dismiss Call</button>
     </div>
 
+    <!-- BOTTOM NAVIGATION -->
     <div class="nav">
         <button class="nav-btn active" onclick="switchTab('tasksTab', this)">⏰ Reminders</button>
         <button class="nav-btn" onclick="switchTab('chatTab', this)">💬 Gemini AI</button>
